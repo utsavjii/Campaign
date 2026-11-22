@@ -1,0 +1,816 @@
+/* ============================================================
+   The Big Quiz Show — app logic
+   ============================================================ */
+
+(function () {
+  'use strict';
+
+  const $ = function (id) { return document.getElementById(id); };
+  const BEST_KEY = 'bq_best_v1';
+
+  const PRAISE = ['Woohoo! 🎉', 'Brain power! 🧠✨', 'Nailed it! 🎯', 'High five! 🙌', 'You are on fire! 🔥', 'Superb! 🚀'];
+  const OOPS = ['Good try! Now you know 💡', 'Oops — let\'s learn it together 🤝', 'Nearly! Read the tip 👉', 'No worries, mistakes help us grow 🌱'];
+  const CHEERS = ['You\'ve got this! 💪', 'Read carefully, superstar ⭐', 'Think, then tap! 🧠', 'Let\'s gooo! 🚀', 'Take your time — you\'re doing great 🌈'];
+  const GOOD_TITLES = ['Yes! ⭐', 'Brilliant! 🌟', 'You got it! 🎯', 'That\'s right! 🎉', 'Super! 🚀'];
+
+  const TYPE_LABELS = {
+    mc: 'Multiple choice',
+    tf: 'True or false',
+    discuss: 'What would you do?',
+    fill: 'Fill in the blanks',
+    match: 'Match the pairs',
+    odd: 'Odd one out'
+  };
+
+  const PAIR_COLORS = ['#ff5f8d', '#7c5cff', '#00b894', '#f0a500', '#0984e3', '#e17055'];
+
+  const DEFAULT_THEME = {
+    accent: '#7c5cff',
+    accentDark: '#5133d6',
+    soft: '#efeaff',
+    floaters: ['🎒', '♻️', '🧼', '🏆', '⭐', '📚', '🌱', '🧴', '✏️', '🌍', '🎈', '🍎']
+  };
+
+  let state = null;
+  let modalAction = null;
+
+  /* ---------------- helpers ---------------- */
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function getBest() {
+    try { return JSON.parse(localStorage.getItem(BEST_KEY) || '{}') || {}; }
+    catch (e) { return {}; }
+  }
+  function saveBest(id, score, total) {
+    try {
+      const best = getBest();
+      if (!best[id] || score > best[id].score) {
+        best[id] = { score: score, total: total };
+        localStorage.setItem(BEST_KEY, JSON.stringify(best));
+      }
+    } catch (e) { /* storage may be blocked — no problem */ }
+  }
+
+  /* ---------------- background / theme ---------------- */
+  function renderFloaters(pool) {
+    const wrap = $('floaters');
+    wrap.innerHTML = '';
+    const count = window.innerWidth < 600 ? 9 : 15;
+    for (let i = 0; i < count; i++) {
+      const s = document.createElement('span');
+      s.textContent = pool[i % pool.length];
+      s.style.left = (Math.random() * 96) + '%';
+      s.style.fontSize = (16 + Math.random() * 24) + 'px';
+      s.style.animationDuration = (14 + Math.random() * 15) + 's';
+      s.style.animationDelay = (-Math.random() * 24) + 's';
+      wrap.appendChild(s);
+    }
+  }
+
+  function setTheme(def) {
+    const r = document.documentElement.style;
+    r.setProperty('--accent', def.accent);
+    r.setProperty('--accent-dark', def.accentDark);
+    r.setProperty('--soft', def.soft);
+    renderFloaters(def.floaters || DEFAULT_THEME.floaters);
+  }
+
+  /* ---------------- screens ---------------- */
+  function show(name) {
+    ['home', 'quiz', 'results'].forEach(function (id) { $(id).hidden = id !== name; });
+    $('homeBtn').hidden = name === 'home';
+    $('scorePill').hidden = name !== 'quiz';
+    document.body.dataset.screen = name;
+    document.body.classList.toggle('results-mode', name === 'results');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* ---------------- home ---------------- */
+  function renderHome() {
+    const best = getBest();
+    $('themeGrid').innerHTML = THEMES.concat([MIXED]).map(function (def) {
+      const b = best[def.id];
+      const bestTag = b ? '<span class="tc-best">⭐ ' + b.score + '/' + b.total + '</span>' : '';
+      return '' +
+        '<button class="theme-card' + (def.id === 'mixed' ? ' mixed' : '') + '" data-theme="' + def.id + '"' +
+        ' style="--c:' + def.accent + ';--cd:' + def.accentDark + ';--cs:' + def.soft + '">' +
+        bestTag +
+        '<span class="tc-emoji" aria-hidden="true">' + def.emoji + '</span>' +
+        '<span class="tc-name">' + esc(def.name) + '</span>' +
+        '<span class="tc-desc">' + esc(def.desc) + '</span>' +
+        '<span class="tc-meta">' + (def.id === 'mixed' ? '20 marks · big finale' : '20 questions · 18 marks') + '</span>' +
+        '</button>';
+    }).join('');
+
+    $('themeGrid').querySelectorAll('.theme-card').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        Sound.sfx('click');
+        startQuiz(btn.dataset.theme);
+      });
+    });
+
+    renderReport();
+  }
+
+  function renderReport() {
+    const best = getBest();
+    const order = ['discipline', 'waste', 'hygiene', 'mixed'];
+    const played = order.filter(function (id) { return best[id]; });
+    const totalScore = played.reduce(function (s, id) { return s + best[id].score; }, 0);
+
+    const chips = order.map(function (id) {
+      const q = ALL_QUIZZES[id];
+      const b = best[id];
+      return '<span class="report-chip' + (b ? ' done' : '') + '">' + q.emoji + ' ' + esc(q.name) +
+        (b ? ' · ' + b.score + '/' + b.total : ' · not played yet') + '</span>';
+    }).join('');
+
+    let totalLine;
+    if (played.length === 4) {
+      const band = totalScore >= 66 ? 'Eco-Hygiene Hero 🏆'
+        : totalScore >= 52 ? 'Great Learner 🌟'
+        : totalScore >= 37 ? 'Getting there 🌱' : 'Keep trying 💪';
+      totalLine = 'All four done! Total: <b>' + totalScore + ' / 74</b> — ' + band;
+    } else {
+      totalLine = 'Played <b>' + played.length + ' of 4</b>. Finish all four to unlock your total out of 74!';
+    }
+
+    $('report').innerHTML =
+      '<h3>🏅 My Report Card</h3>' +
+      '<p class="report-line">Your best scores are saved on this device.</p>' +
+      '<div class="report-chips">' + chips + '</div>' +
+      '<div class="report-total">' + totalLine +
+        (played.length ? '<button class="reset-btn" id="resetBtn" type="button">🧹 Reset my scores</button>' : '') +
+      '</div>';
+
+    const resetBtn = $('resetBtn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function () {
+        openModal('Reset your scores?', 'This clears the saved best scores on this device. You can play again to set new ones.', function () {
+          try { localStorage.removeItem(BEST_KEY); } catch (e) {}
+          renderHome();
+        });
+      });
+    }
+  }
+
+  /* ---------------- quiz flow ---------------- */
+  function startQuiz(id) {
+    const def = ALL_QUIZZES[id];
+    if (!def) return;
+    Speech.stop();
+    state = {
+      def: def,
+      steps: def.steps,
+      idx: 0,
+      earned: 0,
+      total: def.marks,
+      answered: false
+    };
+    setTheme(def);
+    show('quiz');
+    renderStep();
+    Sound.ensure();
+    if (Sound.musicOn && !Sound.playing) Sound.startMusic();
+  }
+
+  function updateScore() {
+    $('scoreNow').textContent = state.earned;
+    $('scoreTotal').textContent = state.total;
+    $('quizScore').textContent = state.earned;
+  }
+
+  function award(n) {
+    if (!n) return;
+    state.earned += n;
+    updateScore();
+    const pill = $('scorePill');
+    pill.classList.remove('pop');
+    void pill.offsetWidth;
+    pill.classList.add('pop');
+  }
+
+  function setBubble(msg) {
+    const b = $('bubble');
+    b.textContent = msg;
+    b.classList.remove('pop');
+    void b.offsetWidth;
+    b.classList.add('pop');
+  }
+
+  function bounceMascot() {
+    const m = $('mascot');
+    m.classList.remove('happy');
+    void m.offsetWidth;
+    m.classList.add('happy');
+  }
+
+  function showFeedback(ok, title, text) {
+    const fb = $('feedback');
+    fb.className = 'feedback ' + (ok ? 'good' : 'oops');
+    fb.innerHTML = '<span class="fb-emoji" aria-hidden="true">' + (ok ? '🎉' : '💡') + '</span>' +
+      '<div><strong>' + esc(title) + '</strong><p>' + esc(text) + '</p></div>';
+    fb.hidden = false;
+  }
+
+  function readyNext(pulse) {
+    const nb = $('nextBtn');
+    nb.disabled = false;
+    if (pulse !== false) nb.classList.add('ready');
+    requestAnimationFrame(function () {
+      const nb = $('nextBtn');
+      if (nb.getBoundingClientRect().bottom > window.innerHeight - 6) {
+        nb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+
+  function updateProgress() {
+    const pct = state.steps.length > 1 ? (state.idx / (state.steps.length - 1)) * 100 : 0;
+    const pos = Math.max(1.5, Math.min(98.5, pct));
+    $('progFill').style.width = pct + '%';
+    $('rocket').style.left = pos + '%';
+    $('progLabel').textContent = state.def.id === 'mixed'
+      ? 'Step ' + (state.idx + 1) + ' of ' + state.steps.length
+      : 'Question ' + (state.idx + 1) + ' of ' + state.steps.length;
+  }
+
+  function renderStep() {
+    const step = state.steps[state.idx];
+    state.answered = false;
+
+    const card = $('qcard');
+    card.classList.remove('enter');
+    card.classList.remove('flash-good');
+    void card.offsetWidth;
+    card.classList.add('enter');
+
+    $('qtype').textContent = TYPE_LABELS[step.type] || 'Question';
+    $('qnum').textContent = (state.idx + 1) + ' / ' + state.steps.length;
+    $('qtext').textContent = step.title || step.q || '';
+    $('qbody').innerHTML = '';
+    $('feedback').hidden = true;
+    $('feedback').className = 'feedback';
+    $('nextBtn').disabled = true;
+    $('nextBtn').classList.remove('ready');
+    $('nextBtn').textContent = state.idx === state.steps.length - 1 ? 'Finish 🏁' : 'Next ➜';
+    $('readBtn').textContent = '🔈 Read aloud';
+
+    updateProgress();
+    updateScore();
+    setBubble(pick(CHEERS));
+
+    if (step.type === 'mc' || step.type === 'tf' || step.type === 'odd') renderChoice(step);
+    else if (step.type === 'discuss') renderDiscuss(step);
+    else if (step.type === 'fill') renderFill(step);
+    else if (step.type === 'match') renderMatch(step);
+  }
+
+  /* ---------------- multiple choice / true-false / odd one out ---------------- */
+  function renderChoice(step) {
+    const isTF = step.type === 'tf';
+    const opts = isTF ? ['True', 'False'] : step.options;
+    const correctIndex = isTF ? (step.a ? 0 : 1) : step.a;
+    const body = $('qbody');
+
+    body.innerHTML = '<div class="options' + (isTF ? ' tf' : '') + '" role="group" aria-label="Answer options">' +
+      opts.map(function (o, i) {
+        const badge = isTF ? (i === 0 ? '✅' : '❌') : 'ABCD'[i];
+        return '<button class="opt" type="button" data-i="' + i + '">' +
+          '<span class="badge" aria-hidden="true">' + badge + '</span>' +
+          '<span class="txt">' + esc(o) + '</span>' +
+          '<span class="mark" aria-hidden="true"></span></button>';
+      }).join('') + '</div>';
+
+    body.querySelectorAll('.opt').forEach(function (btn, i) {
+      btn.addEventListener('click', function () { chooseOption(step, i, correctIndex, btn); });
+    });
+  }
+
+  function chooseOption(step, i, correctIndex, btn) {
+    if (state.answered) return;
+    state.answered = true;
+
+    const ok = i === correctIndex;
+    const all = Array.prototype.slice.call(btn.parentElement.querySelectorAll('.opt'));
+    all.forEach(function (b, bi) {
+      b.disabled = true;
+      if (bi === correctIndex) b.classList.add('correct');
+    });
+    if (!ok) btn.classList.add('wrong');
+
+    if (ok) {
+      award(1);
+      Sound.sfx('correct');
+      burstAt(btn, 55);
+      bounceMascot();
+      setBubble(pick(PRAISE));
+      const card = $('qcard');
+      card.classList.remove('flash-good');
+      void card.offsetWidth;
+      card.classList.add('flash-good');
+      showFeedback(true, pick(GOOD_TITLES), step.explain);
+    } else {
+      Sound.sfx('wrong');
+      setBubble(pick(OOPS));
+      showFeedback(false, 'Not quite — but now you know! 💡', step.explain);
+    }
+    readyNext();
+  }
+
+  /* ---------------- discussion ---------------- */
+  function renderDiscuss(step) {
+    const body = $('qbody');
+    body.innerHTML =
+      '<div class="discuss-box">' +
+        '<p class="hint">💭 There is no wrong answer here. Think about it, say your idea out loud, or type it below.</p>' +
+        '<textarea class="idea" maxlength="400" placeholder="My idea is... (optional)"></textarea>' +
+        '<button class="check-btn" id="sampleBtn" type="button">🪄 Show a sample answer</button>' +
+        '<div class="sample" id="sample" hidden>💡 ' + esc(step.sample) + '</div>' +
+      '</div>';
+
+    $('sampleBtn').addEventListener('click', function () {
+      const s = $('sample');
+      s.hidden = !s.hidden;
+      this.textContent = s.hidden ? '🪄 Show a sample answer' : '🙈 Hide sample answer';
+      Sound.sfx('pop');
+    });
+
+    state.answered = true;
+    readyNext(false);
+  }
+
+  /* ---------------- fill in the blanks ---------------- */
+  function blankify(text, i) {
+    const parts = String(text).split('___');
+    let out = '';
+    parts.forEach(function (p, idx) {
+      out += esc(p);
+      if (idx < parts.length - 1) {
+        out += '<button class="blank" type="button" data-b="' + i + '" aria-label="Blank ' + (i + 1) + '">?</button>';
+      }
+    });
+    return out;
+  }
+
+  function renderFill(step) {
+    const answers = new Array(step.items.length).fill(null);
+    let active = 0;
+    const body = $('qbody');
+
+    body.innerHTML =
+      '<p class="hint">Tap a word from the word bank, then tap the blank where it belongs. Tap a filled blank to take the word back.</p>' +
+      '<div class="bank" id="bank" aria-label="Word bank">' +
+        step.bank.map(function (w) {
+          return '<button class="word" type="button" data-w="' + esc(w) + '">' + esc(w) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<ol class="fill-list">' +
+        step.items.map(function (it, i) {
+          return '<li data-i="' + i + '"><span class="fill-line">' + blankify(it.text, i) + '</span></li>';
+        }).join('') +
+      '</ol>' +
+      '<button class="check-btn" id="checkFill" type="button">Check my answers ✅</button>';
+
+    function paint() {
+      const used = answers.filter(Boolean);
+      body.querySelectorAll('.word').forEach(function (w) {
+        const isUsed = used.indexOf(w.dataset.w) !== -1;
+        w.classList.toggle('used', isUsed);
+        w.disabled = isUsed || state.answered;
+      });
+      body.querySelectorAll('.blank').forEach(function (b) {
+        const i = +b.dataset.b;
+        b.textContent = answers[i] || '?';
+        b.classList.toggle('filled', !!answers[i]);
+        b.classList.toggle('active', active === i && !state.answered);
+        b.disabled = state.answered;
+      });
+    }
+
+    body.querySelectorAll('.word').forEach(function (w) {
+      w.addEventListener('click', function () {
+        if (state.answered) return;
+        let i = active;
+        if (i === null || answers[i]) i = answers.indexOf(null);
+        if (i === -1) return;
+        answers[i] = w.dataset.w;
+        active = answers.indexOf(null);
+        if (active === -1) active = null;
+        Sound.sfx('click');
+        paint();
+      });
+    });
+
+    body.querySelectorAll('.blank').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (state.answered) return;
+        const i = +b.dataset.b;
+        answers[i] = null;
+        active = i;
+        Sound.sfx('click');
+        paint();
+      });
+    });
+
+    $('checkFill').addEventListener('click', function () {
+      if (state.answered) return;
+      state.answered = true;
+      let correct = 0;
+
+      step.items.forEach(function (it, i) {
+        const li = body.querySelector('li[data-i="' + i + '"]');
+        const good = answers[i] === it.answer;
+        li.classList.add(good ? 'good' : 'bad');
+        if (good) {
+          correct++;
+        } else {
+          const fix = document.createElement('span');
+          fix.className = 'fix';
+          fix.textContent = '→ ' + it.answer;
+          li.querySelector('.fill-line').appendChild(fix);
+        }
+      });
+
+      paint();
+      this.disabled = true;
+      this.textContent = 'Checked ✔';
+      award(correct);
+
+      const perfect = correct === step.items.length;
+      if (perfect) {
+        Sound.sfx('correct');
+        Confetti.burst(window.innerWidth * 0.5, window.innerHeight * 0.3, 90);
+        bounceMascot();
+        setBubble('PERFECT! 🌟🌟');
+      } else if (correct >= step.items.length / 2) {
+        Sound.sfx('pop');
+        setBubble('Great effort! 💪');
+      } else {
+        Sound.sfx('wrong');
+        setBubble(pick(OOPS));
+      }
+
+      showFeedback(perfect, perfect ? 'Perfect! 🌟' : 'You got ' + correct + ' of ' + step.items.length + '! 💪',
+        perfect ? 'Every blank is correct. Amazing work!'
+          : 'The right words are shown next to the blanks. Read them once more and they will stick!');
+      readyNext();
+    });
+
+    paint();
+  }
+
+  /* ---------------- matching ---------------- */
+  function renderMatch(step) {
+    const letters = 'ABCDEF';
+    const rights = shuffle(step.pairs.map(function (p, i) { return { id: i, label: p.right }; }));
+    rights.forEach(function (r, i) { r.letter = letters[i]; });
+
+    const pairOf = {};
+    let sel = null;
+    const body = $('qbody');
+
+    body.innerHTML =
+      '<p class="hint">Tap an item on the left, then tap where it belongs on the right.</p>' +
+      '<div class="match">' +
+        '<div class="mcol"><h4>🗑️ The waste</h4>' +
+          step.pairs.map(function (p, i) {
+            return '<button class="m-item left" type="button" data-left="' + i + '">' +
+              '<span class="num" aria-hidden="true">' + (i + 1) + '</span>' +
+              '<span class="m-label">' + esc(p.left) + '</span>' +
+              '<span class="tag" aria-hidden="true"></span></button>';
+          }).join('') +
+        '</div>' +
+        '<div class="mcol"><h4>📍 Where it belongs</h4>' +
+          rights.map(function (r) {
+            return '<button class="m-item right" type="button" data-right="' + r.id + '">' +
+              '<span class="letter" aria-hidden="true">' + r.letter + '</span>' +
+              '<span class="m-label">' + esc(r.label) + '</span>' +
+              '<span class="tag" aria-hidden="true"></span></button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<button class="check-btn" id="checkMatch" type="button">Check my matches ✅</button>';
+
+    const lefts = Array.prototype.slice.call(body.querySelectorAll('.m-item.left'));
+    const rts = Array.prototype.slice.call(body.querySelectorAll('.m-item.right'));
+
+    function paint() {
+      lefts.forEach(function (l, li) {
+        const rid = pairOf[li];
+        const has = rid !== undefined;
+        l.classList.toggle('sel', sel === li && !state.answered);
+        l.classList.toggle('paired', has);
+        if (has) l.style.setProperty('--pc', PAIR_COLORS[li % PAIR_COLORS.length]);
+        else l.style.removeProperty('--pc');
+        l.querySelector('.tag').textContent = has ? rights.filter(function (r) { return r.id === rid; })[0].letter : '';
+      });
+      rts.forEach(function (r) {
+        const rid = +r.dataset.right;
+        let owner = null;
+        Object.keys(pairOf).forEach(function (k) {
+          if (pairOf[k] === rid) owner = +k;
+        });
+        r.classList.toggle('paired', owner !== null);
+        if (owner !== null) r.style.setProperty('--pc', PAIR_COLORS[owner % PAIR_COLORS.length]);
+        else r.style.removeProperty('--pc');
+        r.querySelector('.tag').textContent = owner !== null ? String(owner + 1) : '';
+      });
+    }
+
+    lefts.forEach(function (l) {
+      l.addEventListener('click', function () {
+        if (state.answered) return;
+        const li = +l.dataset.left;
+        sel = (sel === li) ? null : li;
+        Sound.sfx('click');
+        paint();
+      });
+    });
+
+    rts.forEach(function (r) {
+      r.addEventListener('click', function () {
+        if (state.answered) return;
+        const rid = +r.dataset.right;
+        let owner = null;
+        Object.keys(pairOf).forEach(function (k) { if (pairOf[k] === rid) owner = +k; });
+
+        if (owner !== null) {
+          delete pairOf[owner];
+          paint();
+          Sound.sfx('click');
+          return;
+        }
+        if (sel === null) {
+          setBubble('Pick an item on the left first! 👈');
+          Sound.sfx('pop');
+          return;
+        }
+        pairOf[sel] = rid;
+        sel = null;
+        Sound.sfx('click');
+        paint();
+      });
+    });
+
+    $('checkMatch').addEventListener('click', function () {
+      if (state.answered) return;
+      state.answered = true;
+      sel = null;
+
+      let correct = 0;
+      lefts.forEach(function (l, li) {
+        const ok = pairOf[li] === li;
+        l.classList.add(ok ? 'good' : 'bad');
+        if (ok) {
+          correct++;
+        } else {
+          const fix = document.createElement('span');
+          fix.className = 'fix';
+          fix.textContent = '→ ' + step.pairs[li].right;
+          l.appendChild(fix);
+        }
+        l.disabled = true;
+      });
+      rts.forEach(function (r) { r.disabled = true; });
+
+      paint();
+      this.disabled = true;
+      this.textContent = 'Checked ✔';
+      award(correct);
+
+      const perfect = correct === step.pairs.length;
+      if (perfect) {
+        Sound.sfx('correct');
+        Confetti.burst(window.innerWidth * 0.5, window.innerHeight * 0.3, 90);
+        bounceMascot();
+        setBubble('PERFECT MATCH! 🎉');
+      } else if (correct > 0) {
+        Sound.sfx('pop');
+        setBubble('Good job — check the fixes! 💡');
+      } else {
+        Sound.sfx('wrong');
+        setBubble(pick(OOPS));
+      }
+
+      showFeedback(perfect, perfect ? 'Perfect match! 🌟' : 'You matched ' + correct + ' of ' + step.pairs.length + '! 💪',
+        perfect ? 'Every piece of waste found its right home. Earth says thank you! 🌍'
+          : 'The correct pair is shown next to any item you missed. Try saying them out loud!');
+      readyNext();
+    });
+
+    paint();
+  }
+
+  /* ---------------- confetti helper ---------------- */
+  function burstAt(el, count) {
+    const r = el.getBoundingClientRect();
+    Confetti.burst(r.left + r.width / 2, r.top + r.height / 2, count || 45);
+  }
+
+  /* ---------------- results ---------------- */
+  function finish() {
+    Speech.stop();
+    const earned = state.earned;
+    const total = state.total;
+    const pct = total ? earned / total : 0;
+    const stars = pct >= 0.89 ? 3 : pct >= 0.66 ? 2 : pct >= 0.5 ? 1 : 0;
+
+    saveBest(state.def.id, earned, total);
+
+    const info = [
+      { t: 'Keep going!', e: '🌱', m: 'Every try makes you smarter. Read the answers and play again — you will improve fast!' },
+      { t: 'Nice effort!', e: '💪', m: 'You are getting there! A little more practice and you will zoom ahead.' },
+      { t: 'Great job!', e: '🌟', m: 'Super work! You know a lot about this theme. Can you reach champion level?' },
+      { t: 'Quiz Champion!', e: '🏆', m: 'Fantastic! You are a superstar. Try another theme and collect all the stars!' }
+    ][stars];
+
+    $('trophy').textContent = info.e;
+    $('resTitle').textContent = info.t;
+    $('resStars').innerHTML = [0, 1, 2].map(function (i) {
+      return '<span class="' + (i < stars ? 'on' : '') + '" style="--sd:' + (i * 0.18) + 's">⭐</span>';
+    }).join('');
+    $('resScore').textContent = earned;
+    $('resTotal').textContent = total;
+    $('resMsg').textContent = info.m;
+
+    show('results');
+    renderHome();
+
+    Sound.sfx('win');
+    if (stars > 0) {
+      Confetti.burst(window.innerWidth * 0.5, window.innerHeight * 0.32, 80);
+      setTimeout(function () { Confetti.rain(); }, 700);
+    }
+  }
+
+  function goHome() {
+    Speech.stop();
+    state = null;
+    setTheme(DEFAULT_THEME);
+    show('home');
+    renderHome();
+  }
+
+  /* ---------------- modal ---------------- */
+  function openModal(title, text, action) {
+    $('modalTitle').textContent = title;
+    $('modalText').textContent = text;
+    $('modal').hidden = false;
+    modalAction = action || null;
+  }
+  function closeModal() {
+    $('modal').hidden = true;
+    modalAction = null;
+  }
+
+  /* ---------------- sound buttons ---------------- */
+  function updateSoundButtons() {
+    const m = $('musicBtn');
+    const s = $('sfxBtn');
+    m.textContent = Sound.musicOn ? '🎵' : '🔇';
+    m.classList.toggle('off', !Sound.musicOn);
+    m.title = Sound.musicOn ? 'Music on' : 'Music off';
+    s.textContent = Sound.sfxOn ? '🔊' : '🔈';
+    s.classList.toggle('off', !Sound.sfxOn);
+    s.title = Sound.sfxOn ? 'Sound effects on' : 'Sound effects off';
+  }
+
+  /* ---------------- read aloud ---------------- */
+  function readCurrent() {
+    if (!state) return;
+    const step = state.steps[state.idx];
+    let text = step.title || step.q || '';
+
+    if (step.type === 'mc' || step.type === 'odd') {
+      text += '. ' + step.options.map(function (o, i) { return 'ABCD'[i] + '. ' + o; }).join('. ');
+    } else if (step.type === 'tf') {
+      text += ' True or false?';
+    } else if (step.type === 'fill') {
+      text = step.title + '. Word bank: ' + step.bank.join(', ') + '. ' +
+        step.items.map(function (it) { return it.text.replace('___', 'blank'); }).join(' ');
+    } else if (step.type === 'match') {
+      text = step.title + '. Match each waste item with the place where it belongs.';
+    }
+
+    const started = Speech.say(text);
+    if (!started) setBubble('Read aloud is not available in this browser 😅');
+  }
+
+  /* ---------------- init ---------------- */
+  function init() {
+    /* animated hero title */
+    const titleEl = $('bigTitle');
+    const titleText = titleEl.textContent;
+    titleEl.innerHTML = Array.from(titleText).map(function (ch, i) {
+      return ch === ' '
+        ? '<span class="gap">&nbsp;</span>'
+        : '<span style="animation-delay:' + (i * 0.06).toFixed(2) + 's">' + esc(ch) + '</span>';
+    }).join('');
+
+    setTheme(DEFAULT_THEME);
+    renderHome();
+    updateSoundButtons();
+    show('home');
+
+    /* music can only begin after a user gesture */
+    if (Sound.musicOn) $('musicBtn').classList.add('pulse');
+    document.addEventListener('pointerdown', function () {
+      $('musicBtn').classList.remove('pulse');
+      Sound.ensure();
+      if (Sound.musicOn) Sound.startMusic();
+    }, { once: true });
+
+    $('homeBtn').addEventListener('click', function () {
+      if (!$('quiz').hidden) {
+        openModal('Leave the quiz?', 'Your stars for this quiz will not be saved.', goHome);
+      } else {
+        goHome();
+      }
+    });
+    $('homeBtn2').addEventListener('click', goHome);
+
+    $('musicBtn').addEventListener('click', function () {
+      Sound.musicOn = !Sound.musicOn;
+      localStorage.setItem('bq_music', Sound.musicOn ? '1' : '0');
+      if (Sound.musicOn) {
+        Sound.ensure();
+        Sound.startMusic();
+      } else {
+        Sound.stopMusic();
+      }
+      updateSoundButtons();
+    });
+
+    $('sfxBtn').addEventListener('click', function () {
+      Sound.sfxOn = !Sound.sfxOn;
+      localStorage.setItem('bq_sfx', Sound.sfxOn ? '1' : '0');
+      if (Sound.sfxOn) Sound.sfx('pop');
+      updateSoundButtons();
+    });
+
+    $('nextBtn').addEventListener('click', function () {
+      if (!state) return;
+      Sound.sfx('click');
+      if (state.idx < state.steps.length - 1) {
+        state.idx++;
+        renderStep();
+      } else {
+        finish();
+      }
+    });
+
+    $('quitBtn').addEventListener('click', function () {
+      openModal('Leave the quiz?', 'Your stars for this quiz will not be saved.', goHome);
+    });
+
+    $('readBtn').addEventListener('click', readCurrent);
+
+    $('modalNo').addEventListener('click', closeModal);
+    $('modalYes').addEventListener('click', function () {
+      const action = modalAction;
+      closeModal();
+      if (action) action();
+    });
+    $('modal').addEventListener('click', function (e) {
+      if (e.target === $('modal')) closeModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('modal').hidden) closeModal();
+    });
+
+    $('againBtn').addEventListener('click', function () {
+      if (state) startQuiz(state.def.id);
+      else goHome();
+    });
+    $('nextThemeBtn').addEventListener('click', goHome);
+
+    window.addEventListener('resize', function () {
+      if (window.innerWidth < 600 && document.querySelectorAll('#floaters span').length > 9) {
+        renderFloaters((state ? state.def : DEFAULT_THEME).floaters || DEFAULT_THEME.floaters);
+      }
+    });
+
+    /* optional deep link: index.html#waste, #hygiene, #mixed */
+    const hash = location.hash.replace(/^#\/?/, '');
+    if (hash && ALL_QUIZZES[hash]) startQuiz(hash);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
