@@ -5,6 +5,7 @@ A bright, animated, kid-friendly quiz webpage built from **Themes Quiz (Classes 
 ## Open it
 
 Double-click **`index.html`** (Chrome or Edge works best). No installation or server is needed.
+Or [CLICK HERE](https://campaign-psi-navy.vercel.app/)
 
 ## What's inside
 
