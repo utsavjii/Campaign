@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;700;800&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/quiz.css">
+<link rel="stylesheet" href="css/whatif.css">
 </head>
 <body>
 
@@ -43,7 +44,7 @@
       <span class="hero-badge">🎈 Classes 6 · 7 · 8</span>
       <h1 class="title" id="bigTitle">The Big Quiz Show!</h1>
       <p class="subtitle">School Discipline • Waste Management • Hygiene</p>
-      <p class="hero-note">20 fun questions in every theme. Tap an answer, collect stars and learn something new! ⭐</p>
+      <p class="hero-note">20 fun questions in every theme, plus 30 What If...? situation cards. Tap, play and collect stars! ⭐</p>
       <div class="hero-mascots" aria-hidden="true">
         <span style="--d:0s">🦉</span><span style="--d:.25s">🧑‍🏫</span><span style="--d:.5s">🌍</span>
       </div>
@@ -51,6 +52,31 @@
 
     <div class="pick-row"><span class="doodle" aria-hidden="true">👉</span><h2>Pick your quiz!</h2></div>
     <div class="theme-grid" id="themeGrid"></div>
+
+    <div class="whatif-promo">
+      <div class="wp-copy">
+        <span class="wp-kicker">✨ New · 30 situation cards</span>
+        <h2 class="wp-title">What If...?</h2>
+        <p class="wp-text">A broken window. A full bin. A sniffly friend. What would <b>you</b> do? Pick a card, talk it out and choose the kindest way forward.</p>
+        <div class="wp-tags" aria-hidden="true">
+          <span>🔗 Chain Reaction</span>
+          <span>🤔 Dilemma</span>
+          <span>🌱 Be the Change</span>
+        </div>
+        <button class="btn wp-btn" id="whatifBtn" type="button">🃏 Open the cards</button>
+        <p class="wp-progress" id="wiPromoCount">30 situation cards</p>
+      </div>
+      <div class="wp-art" aria-hidden="true">
+        <span class="wp-spark s1">✨</span>
+        <span class="wp-spark s2">💭</span>
+        <span class="wp-spark s3">❓</span>
+        <div class="wp-deck">
+          <div class="wp-mini m1"></div>
+          <div class="wp-mini m2"></div>
+          <div class="wp-mini m3">🤔</div>
+        </div>
+      </div>
+    </div>
 
     <div class="report" id="report"></div>
 
@@ -91,6 +117,37 @@
     </div>
   </section>
 
+  <!-- ================= WHAT IF ================= -->
+  <section id="whatif" class="screen" hidden>
+    <div class="wi-top">
+      <button class="chip-btn" id="wiBack" type="button">✖ Home</button>
+      <div class="wi-titlewrap">
+        <h2 class="wi-title">What If...?</h2>
+        <p class="wi-sub" id="wiSub">Stop · Think · Choose</p>
+      </div>
+      <button class="chip-btn" id="wiShuffle" type="button">🔀 Shuffle</button>
+    </div>
+
+    <div class="wi-filters" id="wiFilters" role="group" aria-label="Choose a card theme">
+      <button class="wi-filter on" type="button" data-f="all">🌈 All 30</button>
+      <button class="wi-filter" type="button" data-f="discipline">🎒 Discipline</button>
+      <button class="wi-filter" type="button" data-f="waste">♻️ Waste</button>
+      <button class="wi-filter" type="button" data-f="hygiene">🧼 Hygiene</button>
+    </div>
+
+    <div class="wi-stage">
+      <div class="wi-card" id="wiCard"></div>
+    </div>
+
+    <div class="wi-nav">
+      <button class="btn" id="wiPrev" type="button">⬅ Back</button>
+      <div class="wi-count"><b id="wiPos">1</b> / <span id="wiTotal">30</span><span class="wi-explored-count" id="wiSeenTotal"></span></div>
+      <button class="btn primary" id="wiNext" type="button">Next ➡</button>
+    </div>
+
+    <p class="wi-tip">💡 There is rarely one perfect answer. Listen to each other and pick the kindest choice.</p>
+  </section>
+
   <!-- ================= RESULTS ================= -->
   <section id="results" class="screen" hidden>
     <div class="result-card">
@@ -123,6 +180,7 @@
 <noscript><p style="text-align:center;padding:40px;font-size:1.2rem">Please enable JavaScript to play the quiz. 🙂</p></noscript>
 
 <script src="js/data.js"></script>
+<script src="js/whatif.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/app.js"></script>
 </body>

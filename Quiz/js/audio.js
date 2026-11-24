@@ -1,7 +1,53 @@
 /* ============================================================
    Sound: cheerful background music + game sound effects
    Everything is synthesised in the browser (no audio files).
+   Each page section gets its own little tune.
    ============================================================ */
+
+const MUSIC_MOODS = {
+  /* Home: bright and welcoming */
+  home: {
+    bpm: 112, leadWave: 'triangle', bassWave: 'sine', perc: 0.9, sparkle: 0, bassVol: 0.13,
+    chords: [[60, 64, 67, 72], [67, 71, 74, 79], [57, 60, 64, 69], [53, 57, 60, 65]],
+    patterns: [[0, 1, 2, 1, 3, 2, 1, 2], [1, 2, 3, 2, 1, 0, 1, 2], [2, 1, 0, 1, 2, 3, 2, 1], [0, 2, 1, 2, 3, 1, 2, 0]]
+  },
+  /* School discipline: steady, thoughtful march */
+  discipline: {
+    bpm: 98, leadWave: 'triangle', bassWave: 'sine', perc: 0.62, sparkle: 0, bassVol: 0.15,
+    chords: [[57, 60, 64, 69], [53, 57, 60, 65], [60, 64, 67, 72], [55, 59, 62, 67]],
+    patterns: [[0, 1, 2, 1, 0, 1, 2, 1], [2, 1, 2, 3, 2, 1, 0, 1], [1, 0, 1, 2, 1, 0, 1, 2], [0, 2, 0, 2, 1, 2, 1, 2]]
+  },
+  /* Waste management: bouncy and earthy */
+  waste: {
+    bpm: 122, leadWave: 'triangle', bassWave: 'sine', perc: 1, sparkle: 0.02, bassVol: 0.13,
+    chords: [[53, 57, 60, 65], [60, 64, 67, 72], [55, 59, 62, 67], [57, 60, 64, 69]],
+    patterns: [[0, 1, 2, 3, 2, 1, 2, 1], [1, 3, 2, 1, 0, 2, 3, 1], [2, 0, 1, 2, 3, 2, 1, 0], [3, 2, 1, 2, 0, 1, 2, 3]]
+  },
+  /* Hygiene: bubbly and sparkling */
+  hygiene: {
+    bpm: 126, leadWave: 'triangle', bassWave: 'sine', perc: 0.95, sparkle: 0.03, bassVol: 0.12,
+    chords: [[62, 66, 69, 74], [57, 61, 64, 69], [59, 62, 66, 71], [55, 59, 62, 67]],
+    patterns: [[0, 1, 2, 1, 3, 2, 1, 2], [2, 3, 2, 1, 0, 1, 2, 3], [1, 0, 1, 2, 3, 2, 1, 0], [0, 2, 3, 2, 1, 0, 2, 1]]
+  },
+  /* Mixed challenge: a big finale fanfare */
+  mixed: {
+    bpm: 132, leadWave: 'triangle', bassWave: 'sine', perc: 1.1, sparkle: 0.035, bassVol: 0.16,
+    chords: [[64, 68, 71, 76], [59, 63, 66, 71], [61, 64, 68, 73], [57, 61, 64, 69]],
+    patterns: [[0, 1, 2, 3, 2, 3, 1, 2], [3, 2, 1, 2, 0, 1, 2, 3], [1, 3, 2, 3, 1, 0, 2, 1], [2, 1, 0, 1, 3, 2, 3, 2]]
+  },
+  /* Results: warm victory tune */
+  results: {
+    bpm: 104, leadWave: 'sine', bassWave: 'sine', perc: 0.7, sparkle: 0.03, bassVol: 0.14,
+    chords: [[60, 64, 67, 72], [53, 57, 60, 65], [55, 59, 62, 67], [60, 64, 67, 72]],
+    patterns: [[0, 1, 2, 3, 2, 1, 3, 2], [1, 2, 3, 2, 3, 2, 1, 0], [2, 3, 2, 1, 2, 3, 2, 1], [0, 2, 3, 2, 1, 3, 2, 0]]
+  },
+  /* What If: curious, wondering tune */
+  whatif: {
+    bpm: 100, leadWave: 'triangle', bassWave: 'sine', perc: 0.45, sparkle: 0.02, bassVol: 0.11,
+    chords: [[57, 60, 64, 69], [50, 53, 57, 62], [57, 60, 64, 69], [52, 56, 59, 64]],
+    patterns: [[0, 2, 1, 3, 2, 1, 3, 2], [1, 0, 2, 1, 3, 2, 1, 0], [2, 1, 3, 2, 0, 1, 3, 2], [3, 2, 1, 0, 2, 1, 3, 2]]
+  }
+};
 
 const Sound = {
   ctx: null,
@@ -14,7 +60,8 @@ const Sound = {
   timer: null,
   step: 0,
   nextTime: 0,
-  stepDur: 60 / 108 / 2,          /* 108 BPM, eighth notes */
+  moodName: 'home',
+  stepDur: 60 / 112 / 2,           /* eighth notes, set from the mood tempo */
 
   ensure: function () {
     try {
@@ -124,7 +171,10 @@ const Sound = {
     if (!ctx || this.playing) return;
     this.playing = true;
     this.step = 0;
+    this.stepDur = 60 / this.mood().bpm / 2;
     this.nextTime = ctx.currentTime + 0.15;
+    this.musicGain.gain.cancelScheduledValues(ctx.currentTime);
+    this.musicGain.gain.setTargetAtTime(this.ducked ? 0.07 : 0.38, ctx.currentTime, 0.1);
     this.schedule();
     this.timer = setInterval(() => this.schedule(), 60);
   },
@@ -135,8 +185,36 @@ const Sound = {
     this.timer = null;
   },
 
+  mood: function () {
+    return MUSIC_MOODS[this.moodName] || MUSIC_MOODS.home;
+  },
+
+  /* Change the background tune for a page section. If music is already
+     playing, it dips briefly and restarts with the new mood. */
+  setMood: function (name) {
+    if (!MUSIC_MOODS[name]) name = 'home';
+    if (this.moodName === name) return;
+    this.moodName = name;
+    this.stepDur = 60 / this.mood().bpm / 2;
+    if (!this.ctx || !this.playing) return;
+
+    const now = this.ctx.currentTime;
+    this.musicGain.gain.cancelScheduledValues(now);
+    this.musicGain.gain.setTargetAtTime(0.0001, now, 0.06);
+    clearTimeout(this._moodTimer);
+    this._moodTimer = setTimeout(() => {
+      if (!this.ctx || !this.playing) return;
+      this.step = 0;
+      this.stepDur = 60 / this.mood().bpm / 2;
+      this.nextTime = this.ctx.currentTime + 0.12;
+      this.musicGain.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.musicGain.gain.setTargetAtTime(this.ducked ? 0.07 : 0.38, this.ctx.currentTime, 0.08);
+    }, 180);
+  },
+
   schedule: function () {
     if (!this.ctx || !this.playing) return;
+    this.stepDur = 60 / this.mood().bpm / 2;
     while (this.nextTime < this.ctx.currentTime + 0.4) {
       this.playStep(this.step, this.nextTime);
       this.nextTime += this.stepDur;
@@ -145,45 +223,40 @@ const Sound = {
   },
 
   playStep: function (stepNo, t) {
-    const CHORDS = [
-      [60, 64, 67],   /* C  */
-      [57, 60, 64],   /* Am */
-      [53, 57, 60],   /* F  */
-      [55, 59, 62]    /* G  */
-    ];
-    const PATTERNS = [
-      [0, 1, 2, 1, 3, 2, 1, 2],
-      [1, 2, 3, 2, 1, 0, 1, 2],
-      [2, 1, 0, 1, 2, 3, 2, 1],
-      [0, 2, 1, 2, 3, 1, 2, 0]
-    ];
-    const bar = Math.floor(stepNo / 8) % 4;
+    const mood = this.mood();
+    const bar = Math.floor(stepNo / 8) % mood.chords.length;
     const within = stepNo % 8;
-    const chord = CHORDS[bar];
-    const lead = [chord[0] + 12, chord[1] + 12, chord[2] + 12, chord[0] + 24];
-    const note = lead[PATTERNS[bar][within]];
+    const chord = mood.chords[bar];
+    const pattern = mood.patterns[bar % mood.patterns.length];
+    const note = chord[pattern[within]];
 
     /* melody */
-    this.tone(this.freq(note), t, 0.24, 'triangle', 0.085, this.musicGain);
+    this.tone(this.freq(note), t, 0.24, mood.leadWave, 0.085, this.musicGain);
 
     /* bass */
     if (within % 2 === 0) {
-      this.tone(this.freq(chord[0] - 12), t, 0.32, 'sine', 0.14, this.musicGain);
+      this.tone(this.freq(chord[0] - 12), t, 0.32, mood.bassWave, mood.bassVol, this.musicGain);
     }
     if (within === 4) {
-      this.tone(this.freq(chord[2] - 12), t, 0.24, 'sine', 0.07, this.musicGain);
+      this.tone(this.freq(chord[2] - 12), t, 0.24, mood.bassWave, mood.bassVol * 0.5, this.musicGain);
+    }
+
+    /* sparkle on top for the livelier sections */
+    if (mood.sparkle && within === 6) {
+      this.tone(this.freq(chord[3] + 12), t, 0.18, 'sine', mood.sparkle, this.musicGain);
     }
 
     /* light percussion */
-    if (within % 2 === 1) this.tick(t, 0.07);
-    if (within === 0 || within === 4) this.tick(t, 0.12);
+    if (within % 2 === 1) this.tick(t, 0.07 * mood.perc);
+    if (within === 0 || within === 4) this.tick(t, 0.12 * mood.perc);
   },
 
   duck: function (on) {
+    this.ducked = !!on;
     if (!this.ctx || !this.musicGain) return;
     const now = this.ctx.currentTime;
     this.musicGain.gain.cancelScheduledValues(now);
-    this.musicGain.gain.setTargetAtTime(on ? 0.07 : 0.38, now, 0.12);
+    this.musicGain.gain.setTargetAtTime(this.ducked ? 0.07 : 0.38, now, 0.12);
   }
 };
 

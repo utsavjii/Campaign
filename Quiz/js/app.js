@@ -7,6 +7,22 @@
 
   const $ = function (id) { return document.getElementById(id); };
   const BEST_KEY = 'bq_best_v1';
+  const WHATIF_KEY = 'bq_whatif_v1';
+
+  const WHATIF_THEME_DEFS = {
+    discipline: {
+      accent: '#7c5cff', accentDark: '#5133d6', soft: '#efeaff',
+      floaters: ['💭', '❓', '💡', '🎒', '📚', '✨', '🏫', '🤔']
+    },
+    waste: {
+      accent: '#00b894', accentDark: '#00805f', soft: '#e2fbf4',
+      floaters: ['💭', '❓', '💡', '♻️', '🍃', '🌍', '🗑️', '✨']
+    },
+    hygiene: {
+      accent: '#0984e3', accentDark: '#0660a8', soft: '#e3f2ff',
+      floaters: ['💭', '❓', '💡', '🧼', '💧', '🧴', '✨', '🫧']
+    }
+  };
 
   const PRAISE = ['Woohoo! 🎉', 'Brain power! 🧠✨', 'Nailed it! 🎯', 'High five! 🙌', 'You are on fire! 🔥', 'Superb! 🚀'];
   const OOPS = ['Good try! Now you know 💡', 'Oops — let\'s learn it together 🤝', 'Nearly! Read the tip 👉', 'No worries, mistakes help us grow 🌱'];
@@ -33,6 +49,7 @@
 
   let state = null;
   let modalAction = null;
+  const wi = { order: [], list: [], i: 0, filter: 'all', lastTheme: null };
 
   /* ---------------- helpers ---------------- */
   function esc(s) {
@@ -63,6 +80,46 @@
     } catch (e) { /* storage may be blocked — no problem */ }
   }
 
+  function getExplored() {
+    try {
+      const list = JSON.parse(localStorage.getItem(WHATIF_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  }
+  function markExplored(id) {
+    const list = getExplored();
+    if (list.indexOf(id) !== -1) return false;
+    list.push(id);
+    try { localStorage.setItem(WHATIF_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
+    return true;
+  }
+
+  /* Build a fresh, shuffled question set for every session. */
+  function buildSessionSteps(def) {
+    const steps = JSON.parse(JSON.stringify(def.steps));
+
+    function prep(step) {
+      if (step.type === 'mc' || step.type === 'odd') {
+        const right = step.options[step.a];
+        step.options = shuffle(step.options);
+        step.a = step.options.indexOf(right);
+      } else if (step.type === 'match') {
+        step.pairs = shuffle(step.pairs);
+      } else if (step.type === 'fill') {
+        step.items = shuffle(step.items);
+        step.bank = shuffle(step.bank);
+      }
+      return step;
+    }
+
+    /* Keep the two structured Mixed Challenge parts first, then shuffle
+       the odd-one-out questions. Theme quizzes shuffle every question. */
+    if (def.id === 'mixed') {
+      return steps.slice(0, 2).map(prep).concat(shuffle(steps.slice(2)).map(prep));
+    }
+    return shuffle(steps).map(prep);
+  }
+
   /* ---------------- background / theme ---------------- */
   function renderFloaters(pool) {
     const wrap = $('floaters');
@@ -89,11 +146,12 @@
 
   /* ---------------- screens ---------------- */
   function show(name) {
-    ['home', 'quiz', 'results'].forEach(function (id) { $(id).hidden = id !== name; });
+    ['home', 'quiz', 'whatif', 'results'].forEach(function (id) { $(id).hidden = id !== name; });
     $('homeBtn').hidden = name === 'home';
     $('scorePill').hidden = name !== 'quiz';
     document.body.dataset.screen = name;
     document.body.classList.toggle('results-mode', name === 'results');
+    document.body.classList.toggle('whatif-mode', name === 'whatif');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -121,11 +179,20 @@
       });
     });
 
+    const promo = $('wiPromoCount');
+    if (promo) {
+      const seen = getExplored().length;
+      promo.textContent = seen
+        ? '⭐ ' + seen + ' of 30 cards explored'
+        : '30 situation cards';
+    }
+
     renderReport();
   }
 
   function renderReport() {
     const best = getBest();
+    const explored = getExplored();
     const order = ['discipline', 'waste', 'hygiene', 'mixed'];
     const played = order.filter(function (id) { return best[id]; });
     const totalScore = played.reduce(function (s, id) { return s + best[id].score; }, 0);
@@ -149,17 +216,22 @@
 
     $('report').innerHTML =
       '<h3>🏅 My Report Card</h3>' +
-      '<p class="report-line">Your best scores are saved on this device.</p>' +
+      '<p class="report-line">Your best scores and explored cards are saved on this device.</p>' +
       '<div class="report-chips">' + chips + '</div>' +
+      '<div class="report-whatif">💭 <b>What If...?</b> cards explored: <b>' + explored.length + ' / 30</b>' +
+        (explored.length === WHATIF_CARDS.length ? ' — all done! 🌟' : '') + '</div>' +
       '<div class="report-total">' + totalLine +
-        (played.length ? '<button class="reset-btn" id="resetBtn" type="button">🧹 Reset my scores</button>' : '') +
+        (played.length || explored.length ? '<button class="reset-btn" id="resetBtn" type="button">🧹 Reset my progress</button>' : '') +
       '</div>';
 
     const resetBtn = $('resetBtn');
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
-        openModal('Reset your scores?', 'This clears the saved best scores on this device. You can play again to set new ones.', function () {
-          try { localStorage.removeItem(BEST_KEY); } catch (e) {}
+        openModal('Reset your progress?', 'This clears your saved best scores and explored What If cards on this device. You can play again to set new ones.', function () {
+          try {
+            localStorage.removeItem(BEST_KEY);
+            localStorage.removeItem(WHATIF_KEY);
+          } catch (e) {}
           renderHome();
         });
       });
@@ -173,13 +245,15 @@
     Speech.stop();
     state = {
       def: def,
-      steps: def.steps,
+      steps: buildSessionSteps(def),
       idx: 0,
       earned: 0,
       total: def.marks,
       answered: false
     };
+    wi.lastTheme = null;
     setTheme(def);
+    Sound.setMood(def.id);
     show('quiz');
     renderStep();
     Sound.ensure();
@@ -646,6 +720,7 @@
     $('resTotal').textContent = total;
     $('resMsg').textContent = info.m;
 
+    Sound.setMood('results');
     show('results');
     renderHome();
 
@@ -659,9 +734,138 @@
   function goHome() {
     Speech.stop();
     state = null;
+    wi.lastTheme = null;
     setTheme(DEFAULT_THEME);
+    Sound.setMood('home');
     show('home');
     renderHome();
+  }
+
+  /* ---------------- what if cards ---------------- */
+  function setWhatIfTheme(themeId) {
+    if (wi.lastTheme === themeId) return;
+    const def = WHATIF_THEME_DEFS[themeId] || WHATIF_THEME_DEFS.discipline;
+    setTheme(def);
+    wi.lastTheme = themeId;
+  }
+
+  function applyWiFilter(filter) {
+    wi.filter = filter;
+    wi.list = filter === 'all'
+      ? wi.order.slice()
+      : wi.order.filter(function (c) { return c.theme === filter; });
+    if (!wi.list.length) {
+      wi.filter = 'all';
+      wi.list = wi.order.slice();
+    }
+    const filters = document.querySelectorAll('#wiFilters .wi-filter');
+    Array.prototype.forEach.call(filters, function (b) {
+      b.classList.toggle('on', b.dataset.f === wi.filter);
+    });
+    $('wiSub').textContent = wi.filter === 'all'
+      ? 'Stop · Think · Choose'
+      : WHATIF_THEMES[wi.filter].emoji + ' ' + WHATIF_THEMES[wi.filter].name;
+  }
+
+  function renderWhatIf() {
+    if (!wi.list.length) return;
+    Speech.stop();
+
+    const card = wi.list[wi.i];
+    const type = WHATIF_TYPES[card.type] || WHATIF_TYPES.dilemma;
+    const theme = WHATIF_THEMES[card.theme] || WHATIF_THEMES.discipline;
+    const firstTime = markExplored(card.id);
+
+    setWhatIfTheme(card.theme);
+
+    const el = $('wiCard');
+    el.className = 'wi-card';
+    void el.offsetWidth;
+    el.classList.add('enter');
+
+    el.innerHTML =
+      '<div class="wi-head">' +
+        '<span class="wi-theme-chip">' + theme.emoji + ' ' + esc(theme.name) + '</span>' +
+        '<span class="wi-type ' + type.className + '">' + type.emoji + ' ' + esc(type.label) + '</span>' +
+      '</div>' +
+      '<h3 class="wi-card-title">' + esc(card.title) + '<span class="wi-id">· #' + card.id + '</span></h3>' +
+      '<p class="wi-situation">' + esc(card.situation) + '</p>' +
+      '<div class="wi-ask">' +
+        '<span class="wi-ask-label">What if...</span>' +
+        '<p>' + esc(card.ask) + '</p>' +
+      '</div>' +
+      '<div class="wi-routine" aria-label="Stop, think, choose">' +
+        '<span class="wi-step"><b><span>1</span>Stop</b><small>What is happening?</small></span>' +
+        '<span class="wi-step"><b><span>2</span>Think</b><small>Who is affected?</small></span>' +
+        '<span class="wi-step"><b><span>3</span>Choose</b><small>What is kind and fair?</small></span>' +
+      '</div>' +
+      '<button class="wi-reveal-btn" id="wiRevealBtn" type="button">💡 Reveal thinking prompts</button>' +
+      '<div class="wi-reveal" id="wiRevealBox" hidden>' +
+        '<h4>🔍 Think about this</h4>' +
+        '<ul>' + card.think.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
+        '<div class="wi-note">🌱 <b>Kind idea:</b> ' + esc(card.note) + '</div>' +
+      '</div>' +
+      '<div class="wi-card-foot">' +
+        '<button class="read-btn" id="wiReadBtn" type="button">🔈 Read aloud</button>' +
+        '<span class="wi-badge' + (firstTime ? '' : ' seen') + '">' +
+          (firstTime ? '✨ New card' : '✔ Seen before') + '</span>' +
+      '</div>';
+
+    $('wiRevealBtn').addEventListener('click', function () {
+      const box = $('wiRevealBox');
+      box.hidden = !box.hidden;
+      this.textContent = box.hidden ? '💡 Reveal thinking prompts' : '🙈 Hide thinking prompts';
+      if (box.hidden) {
+        Sound.sfx('click');
+      } else {
+        Sound.sfx('pop');
+        Confetti.burst(window.innerWidth * 0.5, window.innerHeight * 0.32, 24);
+      }
+    });
+
+    $('wiReadBtn').addEventListener('click', function () {
+      let text = card.title + '. ' + card.situation + ' ' + card.ask;
+      if (!$('wiRevealBox').hidden) {
+        text += ' Think about this. ' + card.think.join(' ');
+      }
+      if (!Speech.say(text)) {
+        const btn = this;
+        btn.textContent = 'Read aloud not available 😅';
+        setTimeout(function () { btn.textContent = '🔈 Read aloud'; }, 2000);
+      }
+    });
+
+    $('wiPos').textContent = wi.i + 1;
+    $('wiTotal').textContent = wi.list.length;
+    const seen = getExplored().length;
+    $('wiSeenTotal').textContent = '⭐ ' + seen + '/30';
+  }
+
+  function openWhatIf(filter) {
+    Speech.stop();
+    wi.order = shuffle(WHATIF_CARDS);
+    wi.i = 0;
+    wi.lastTheme = null;
+    applyWiFilter(filter || 'all');
+    show('whatif');
+    Sound.setMood('whatif');
+    renderWhatIf();
+    Sound.sfx('pop');
+  }
+
+  function wiStep(delta) {
+    if (!wi.list.length) return;
+    wi.i = (wi.i + delta + wi.list.length) % wi.list.length;
+    Sound.sfx('click');
+    renderWhatIf();
+  }
+
+  function shuffleWhatIf() {
+    wi.order = shuffle(WHATIF_CARDS);
+    applyWiFilter(wi.filter);
+    wi.i = 0;
+    renderWhatIf();
+    Sound.sfx('pop');
   }
 
   /* ---------------- modal ---------------- */
@@ -721,6 +925,7 @@
     }).join('');
 
     setTheme(DEFAULT_THEME);
+    Sound.setMood('home');
     renderHome();
     updateSoundButtons();
     show('home');
@@ -741,6 +946,27 @@
       }
     });
     $('homeBtn2').addEventListener('click', goHome);
+
+    /* what if card deck */
+    $('whatifBtn').addEventListener('click', function () {
+      Sound.sfx('click');
+      openWhatIf();
+    });
+    $('wiBack').addEventListener('click', function () {
+      Sound.sfx('click');
+      goHome();
+    });
+    $('wiShuffle').addEventListener('click', shuffleWhatIf);
+    $('wiPrev').addEventListener('click', function () { wiStep(-1); });
+    $('wiNext').addEventListener('click', function () { wiStep(1); });
+    $('wiFilters').addEventListener('click', function (e) {
+      const btn = e.target.closest ? e.target.closest('.wi-filter') : null;
+      if (!btn) return;
+      Sound.sfx('click');
+      applyWiFilter(btn.dataset.f);
+      wi.i = 0;
+      renderWhatIf();
+    });
 
     $('musicBtn').addEventListener('click', function () {
       Sound.musicOn = !Sound.musicOn;
@@ -788,7 +1014,19 @@
       if (e.target === $('modal')) closeModal();
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !$('modal').hidden) closeModal();
+      if (e.key === 'Escape' && !$('modal').hidden) {
+        closeModal();
+        return;
+      }
+      if (!$('whatif').hidden && $('modal').hidden) {
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          wiStep(1);
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          wiStep(-1);
+        }
+      }
     });
 
     $('againBtn').addEventListener('click', function () {
@@ -799,13 +1037,23 @@
 
     window.addEventListener('resize', function () {
       if (window.innerWidth < 600 && document.querySelectorAll('#floaters span').length > 9) {
-        renderFloaters((state ? state.def : DEFAULT_THEME).floaters || DEFAULT_THEME.floaters);
+        const pool = state
+          ? state.def.floaters
+          : (!$('whatif').hidden && wi.lastTheme)
+            ? WHATIF_THEME_DEFS[wi.lastTheme].floaters
+            : DEFAULT_THEME.floaters;
+        renderFloaters(pool || DEFAULT_THEME.floaters);
       }
     });
 
-    /* optional deep link: index.html#waste, #hygiene, #mixed */
+    /* optional deep links: #waste, #hygiene, #mixed, #whatif, #whatif-waste */
     const hash = location.hash.replace(/^#\/?/, '');
-    if (hash && ALL_QUIZZES[hash]) startQuiz(hash);
+    if (hash === 'whatif' || hash.indexOf('whatif-') === 0) {
+      const filter = hash === 'whatif' ? 'all' : hash.replace('whatif-', '');
+      openWhatIf(filter);
+    } else if (hash && ALL_QUIZZES[hash]) {
+      startQuiz(hash);
+    }
   }
 
   if (document.readyState === 'loading') {
